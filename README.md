@@ -25,5 +25,5 @@ Rafiq is a smart assistant that empowers visually impaired users by combining:
 ## 🛠️ Installation & Usage
 1. Clone the repository:
    ```bash
-   git clone https://github.com/YourUsername/Rafiq-رفيق.git
-   cd Rafiq-رفيق
+   git clone https://github.com/Lekaa-Fouad/Rafiq--.git
+   cd Rafiq--
