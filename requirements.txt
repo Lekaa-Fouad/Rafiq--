@@ -1,0 +1,8 @@
+opencv-python
+easyocr
+pytesseract
+speechrecognition
+pyttsx3
+gtts
+face-recognition
+networkx
