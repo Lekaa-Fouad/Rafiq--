@@ -1,8 +1,11 @@
 opencv-python
 easyocr
 pytesseract
-speechrecognition
+SpeechRecognition
 pyttsx3
-gtts
 face-recognition
 networkx
+ultralytics
+nltk
+spacy
+gTTS
