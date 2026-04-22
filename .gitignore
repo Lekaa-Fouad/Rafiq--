@@ -18,3 +18,4 @@ backend/.DS_Store
 backend/Thumbs.db
 backend/test_api.py
 backend/get-pip.py
+notes
