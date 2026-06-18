@@ -8,12 +8,13 @@ Endpoints
   GET    /indoor/floor-plan/{id}     — get a floor plan with its locations
   DELETE /indoor/floor-plan/{id}     — delete a floor plan
   POST   /indoor/route               — get path between two locations
+    POST   /indoor/route-to-voice      — get path and download spoken directions
 """
 
 import logging
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
 
 from core.dependencies import get_db, verify_api_key
 from core.exceptions import RafiqException
@@ -23,8 +24,9 @@ from models.indoor import (
     IndoorRouteRequest,
     IndoorRouteResponse,
     SaveFloorPlanRequest,
+    VoiceRouteResponse,
 )
-from services import indoor_service
+from services import indoor_service, voice_service
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +254,7 @@ async def get_indoor_route(body: IndoorRouteRequest, db_conn=Depends(get_db)):
 
     Find a path between two named locations on a floor plan.
 
-    ### Request
+    ### Option A — Use location IDs
     ```json
     {
       "floor_plan_id": "a1b2c3d4",
@@ -261,25 +263,195 @@ async def get_indoor_route(body: IndoorRouteRequest, db_conn=Depends(get_db)):
     }
     ```
 
+    ### Option B — Type a natural-language sentence
+    ```json
+    {
+      "floor_plan_id": "a1b2c3d4",
+      "query_text": "I am in room one and I want to go to room three"
+    }
+    ```
+    Other examples that work:
+    - `"from room 101 to the exit"`
+    - `"I'm at the toilet, I need to go to room 102"`
+    - Arabic: `"أنا في غرفة واحد وأريد الذهاب إلى غرفة ثلاثة"`
+
     ### Response
     - `path` — list of pixel points to draw on the floor plan image
     - `steps` — turn-by-turn spoken directions
     - `total_distance_meters` — estimated walking distance
     - `speech` — TTS-ready summary
-
-    ### Mobile app usage
-    1. Load the floor plan image
-    2. Call this endpoint to get the path
-    3. Draw the path as a line on top of the floor plan image
-    4. Speak the directions aloud
     """
     logger.info(
-        "[INDOOR] POST /route — plan: %s, from: %s, to: %s",
-        body.floor_plan_id, body.from_location_id, body.to_location_id,
+        "[INDOOR] POST /route — plan: %s, from: %s, to: %s, query: %s",
+        body.floor_plan_id, body.from_location_id, body.to_location_id, body.query_text,
     )
     result = await indoor_service.get_indoor_route(body, db_conn)
     return success_response(
         data=result,
         message=f"Indoor route: {result.from_location.name} → {result.to_location.name}",
         spoken_message=result.speech,
+    )
+
+
+@router.post(
+    "/route-to-voice",
+    summary="Get indoor route and download the spoken directions as MP3",
+    response_class=Response,
+)
+async def get_indoor_route_as_voice(body: IndoorRouteRequest, db_conn=Depends(get_db)):
+    """
+    ## Indoor Route to Voice
+
+    Resolve an indoor route request, then synthesise the route summary with the
+    voice engine so the client can play it immediately.
+    """
+    logger.info(
+        "[INDOOR] POST /route-to-voice — plan: %s, from: %s, to: %s, query: %s",
+        body.floor_plan_id,
+        body.from_location_id,
+        body.to_location_id,
+        body.query_text,
+    )
+    result = await indoor_service.get_indoor_route(body, db_conn)
+    audio_bytes, voice_used, mime_type = await voice_service.synthesise_speech(
+        text=result.speech,
+        voice=None,
+        rate=None,
+        language=None,
+    )
+
+    return Response(
+        content=audio_bytes,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": 'attachment; filename="indoor_route.mp3"',
+            "X-Voice-Used": voice_used,
+            "X-Audio-Size": str(len(audio_bytes)),
+            "X-Indoor-From": result.from_location.name,
+            "X-Indoor-To": result.to_location.name,
+        },
+    )
+
+
+@router.post(
+    "/route-from-voice",
+    summary="Speak your route request — get path + spoken directions back",
+    response_class=Response,
+)
+async def get_indoor_route_from_voice(
+    request: Request,
+    floor_plan_id: str = Form(
+        ...,
+        description="ID of the floor plan to navigate.",
+    ),
+    audio: UploadFile = File(
+        ...,
+        description=(
+            "Audio file containing a natural-language route request, "
+            "e.g. 'I am in room one and I want to go to room three'."
+        ),
+    ),
+    language: Optional[str] = Form(
+        None,
+        description="ISO language hint: 'ar' or 'en'. Leave blank for auto-detect.",
+    ),
+    db_conn=Depends(get_db),
+):
+    """
+    ## Voice-Driven Indoor Navigation  (🎤 → 🗺️ → 🔊)
+
+    The full pipeline in one request:
+
+    1. **STT** — transcribe the uploaded audio with Whisper.
+    2. **NLP** — parse the transcript to find *from* and *to* locations,
+       e.g. *"I am in room one and I want to go to room three"*.
+    3. **Route** — compute the pixel path on the floor plan.
+    4. **TTS** — synthesise the spoken directions with Edge-TTS.
+
+    ### Request (multipart/form-data)
+    | Field | Type | Required | Description |
+    |---|---|---|---|
+    | `floor_plan_id` | string | ✅ | ID returned by `POST /indoor/floor-plan` |
+    | `audio` | file | ✅ | Audio recording (wav / mp3 / m4a / ogg / flac) |
+    | `language` | string | ❌ | `ar` or `en` — auto-detected if omitted |
+
+    ### Response
+    Returns an **MP3 audio file** of the spoken directions.
+
+    Extra metadata is in the response headers:
+
+    | Header | Value |
+    |---|---|
+    | `X-Transcript` | What was heard from your voice |
+    | `X-Detected-Language` | Language detected by Whisper |
+    | `X-Indoor-From` | Resolved starting location name |
+    | `X-Indoor-To` | Resolved destination name |
+    | `X-Distance-Meters` | Estimated walking distance |
+    | `X-Voice-Used` | Edge-TTS voice name |
+
+    ### Example audio phrases
+    - English: *"I am in room one and I want to go to room three"*
+    - Arabic: *"أنا في غرفة واحد وأريد الذهاب إلى غرفة ثلاثة"*
+    - Short form: *"from room 101 to exit"*
+    """
+    logger.info(
+        "[INDOOR] POST /route-from-voice — plan: %s, audio: %s, lang: %s",
+        floor_plan_id, audio.filename, language,
+    )
+
+    # ── Step 1: STT ────────────────────────────────────────────────────────────
+    try:
+        audio_bytes = await audio.read()
+    except Exception as exc:
+        from core.exceptions import AudioProcessingError
+        raise AudioProcessingError(f"Failed to read uploaded audio: {exc}") from exc
+
+    whisper_model = request.app.state.whisper_model
+    stt_result = await voice_service.transcribe_audio(
+        audio_bytes=audio_bytes,
+        whisper_model=whisper_model,
+        language=language,
+    )
+
+    transcript      = stt_result["transcript"]
+    detected_lang   = stt_result["language"]
+
+    logger.info("[INDOOR] STT transcript: '%s' (lang=%s)", transcript, detected_lang)
+
+    if not transcript or not transcript.strip():
+        from core.exceptions import RafiqException
+        raise RafiqException(
+            message="No speech detected in the audio.",
+            spoken_message="I could not hear anything. Please speak clearly and try again.",
+            status_code=422,
+        )
+
+    # ── Step 2 + 3: Parse text → Route ────────────────────────────────────────
+    route_request = IndoorRouteRequest(
+        floor_plan_id=floor_plan_id,
+        query_text=transcript,
+    )
+    result = await indoor_service.get_indoor_route(route_request, db_conn)
+
+    # ── Step 4: TTS ────────────────────────────────────────────────────────────
+    audio_out, voice_used, mime_type = await voice_service.synthesise_speech(
+        text=result.speech,
+        voice=None,
+        rate=None,
+        language=detected_lang if detected_lang in ("ar", "en") else None,
+    )
+
+    return Response(
+        content=audio_out,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": 'attachment; filename="indoor_route.mp3"',
+            "X-Transcript":        transcript,
+            "X-Detected-Language": detected_lang,
+            "X-Indoor-From":       result.from_location.name,
+            "X-Indoor-To":         result.to_location.name,
+            "X-Distance-Meters":   str(result.total_distance_meters),
+            "X-Voice-Used":        voice_used,
+            "X-Audio-Size":        str(len(audio_out)),
+        },
     )

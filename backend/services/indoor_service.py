@@ -25,6 +25,7 @@ This ensures the line always exits/enters through the door — never through a w
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from typing import List, Optional
@@ -46,6 +47,41 @@ from models.indoor import (
 logger = logging.getLogger(__name__)
 
 PIXELS_PER_METRE = 20.0  # 1 metre = 20 pixels (adjust per floor plan scale)
+
+_NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13",
+    "fourteen": "14", "fifteen": "15", "sixteen": "16", "seventeen": "17",
+    "eighteen": "18", "nineteen": "19", "twenty": "20",
+}
+
+# Arabic number words → digits
+_AR_NUMBER_WORDS = {
+    "صفر": "0", "واحد": "1", "اثنين": "2", "اثنان": "2", "ثلاثة": "3",
+    "ثلاث": "3", "أربعة": "4", "اربعة": "4", "خمسة": "5", "ستة": "6",
+    "سبعة": "7", "ثمانية": "8", "تسعة": "9", "عشرة": "10",
+    "أحد عشر": "11", "اثنا عشر": "12", "ثلاثة عشر": "13",
+    "أربعة عشر": "14", "خمسة عشر": "15",
+}
+
+# Arabic location keywords → English equivalents used in matching
+_AR_LOCATION_KEYWORDS = {
+    "غرفة": "room", "قاعة": "hall", "مكتب": "office",
+    "مدخل": "entrance", "مخرج": "exit", "باب": "exit",
+    "دورة المياه": "toilet", "حمام": "toilet",
+    "سلم": "stairs", "درج": "stairs", "مصعد": "elevator",
+}
+
+# Arabic navigation phrases to strip
+_AR_NAV_PHRASES = [
+    "أنا في", "انا في", "أنا عند", "انا عند",
+    "أريد الذهاب إلى", "اريد الذهاب الى", "أريد الذهاب الى",
+    "أريد أن أذهب إلى", "اريد ان اذهب الى",
+    "أريد الوصول إلى", "اريد الوصول الى",
+    "وأريد الذهاب إلى", "واريد الذهاب الى",
+    "وأريد", "واريد", "إلى", "الى", "في", "عند",
+]
 
 
 # ── DB setup ──────────────────────────────────────────────────────────────────
@@ -207,8 +243,26 @@ async def get_indoor_route(
 
     plan     = await get_floor_plan(request.floor_plan_id, conn)
     loc_map  = {loc.id: loc for loc in plan.locations}
-    from_loc = loc_map.get(request.from_location_id)
-    to_loc   = loc_map.get(request.to_location_id)
+
+    if request.query_text:
+        from_loc, to_loc = _resolve_route_from_text(request.query_text, plan.locations)
+    else:
+        from_loc = loc_map.get(request.from_location_id or "")
+        to_loc   = loc_map.get(request.to_location_id or "")
+
+    if not request.query_text and not request.from_location_id and not request.to_location_id:
+        raise RafiqException(
+            message="Missing route input.",
+            spoken_message="Tell me where you are and where you want to go.",
+            status_code=422,
+        )
+
+    if not request.query_text and (not request.from_location_id or not request.to_location_id):
+        raise RafiqException(
+            message="Both from_location_id and to_location_id are required.",
+            spoken_message="Tell me both the starting room and the destination room.",
+            status_code=422,
+        )
 
     if not from_loc:
         raise RafiqException(message=f"Location '{request.from_location_id}' not found.",
@@ -233,6 +287,450 @@ async def get_indoor_route(
         total_distance_meters=dist, speech=speech,
         processing_time_ms=elapsed_ms,
     )
+
+
+def _resolve_route_from_text(query_text: str, locations: List[IndoorLocation]) -> tuple[IndoorLocation, IndoorLocation]:
+    """
+    Parse a natural-language route request in English or Arabic and return
+    (from_location, to_location).
+
+    Strategy (tried in order):
+    1. Direct name/ID scan — find ≥2 location names in the text by position.
+    2. Regex split — split on navigation phrases, match each half.
+    3. Fuzzy partial match — score every location against every word-token.
+    4. Number-only fallback — "room 1 … room 3" even if names differ.
+    """
+    # Translate Arabic to normalised English tokens first
+    translated = _translate_arabic(query_text)
+    norm_query  = _normalize_route_text(translated)
+
+    logger.debug("[INDOOR NLP] raw=%r  translated=%r  norm=%r",
+                 query_text, translated, norm_query)
+
+    # ── Strategy 1: scan all location names in text order ─────────────────────
+    candidates = _extract_location_candidates(norm_query, locations)
+    if len(candidates) >= 2:
+        logger.debug("[INDOOR NLP] Strategy 1 matched: %s → %s",
+                     candidates[0].name, candidates[1].name)
+        return candidates[0], candidates[1]
+
+    # ── Strategy 2: regex split on navigation verbs ───────────────────────────
+    # Each tuple: (pattern, reversed) — reversed=True means groups are (to, from)
+    split_patterns = [
+        # Standard: "I am in <FROM> … go to <TO>"
+        (r"(?:i am|i'm|im)\s+(?:in|at|inside|near|by)\s+(?P<from>.+?)\s+"
+         r"(?:and\s+)?(?:i want to go(?: to)?|want to go(?: to)?|i need to go(?: to)?"
+         r"|need to go(?: to)?|going to|go to|head to|navigate to|take me to)\s+(?P<to>.+)$",
+         False),
+        # Reversed: "go to <TO> … I am in <FROM>"
+        (r"(?:i need to go(?: to)?|i want to go(?: to)?|go to|navigate to|take me to)\s+(?P<to>\S+(?:\s+\S+){0,3}?)"
+         r"\s+(?:i am|i'm|im)\s+(?:in|at|inside|near|by)\s+(?P<from>.+)$",
+         True),
+        # Simple: "from X to Y"
+        (r"^from\s+(?P<from>.+?)\s+to\s+(?P<to>.+)$", False),
+        # Simple: "X to Y"
+        (r"^(?P<from>.+?)\s+to\s+(?P<to>.+)$", False),
+    ]
+    for pattern, is_reversed in split_patterns:
+        m = re.search(pattern, norm_query, flags=re.IGNORECASE)
+        if not m:
+            continue
+        from_raw = m.group("from").strip()
+        to_raw   = m.group("to").strip()
+        logger.debug("[INDOOR NLP] Strategy 2 split: from=%r  to=%r", from_raw, to_raw)
+        from_loc = _fuzzy_match(from_raw, locations)
+        to_loc   = _fuzzy_match(to_raw,   locations)
+        if from_loc and to_loc and from_loc.id != to_loc.id:
+            logger.debug("[INDOOR NLP] Strategy 2 matched: %s → %s",
+                         from_loc.name, to_loc.name)
+            return from_loc, to_loc
+
+    # ── Strategy 3: score all locations against all tokens ────────────────────
+    # Only use if the top two scores are DIFFERENT (one clearly wins)
+    scored = _score_all_locations(norm_query, locations)
+    if len(scored) >= 2 and scored[0][0] > scored[1][0] and scored[0][1].id != scored[1][1].id:
+        from_loc, to_loc = _order_from_to(norm_query, scored[0][1], scored[1][1])
+        logger.debug("[INDOOR NLP] Strategy 3 matched: %s → %s",
+                     from_loc.name, to_loc.name)
+        return from_loc, to_loc
+
+    # ── Strategy 4: extract bare numbers, match against room numbers ──────────
+    # Try all numbers including single digits — _match_by_number handles ambiguity
+    numbers = re.findall(r'\b(\d+)\b', norm_query)
+    if len(numbers) >= 2:
+        loc_a = _match_by_number(numbers[0], locations)
+        loc_b = _match_by_number(numbers[1], locations)
+        if loc_a and loc_b and loc_a.id != loc_b.id:
+            from_loc, to_loc = _order_from_to(norm_query, loc_a, loc_b)
+            logger.debug("[INDOOR NLP] Strategy 4 (numbers) matched: %s → %s",
+                         from_loc.name, to_loc.name)
+            return from_loc, to_loc
+
+    # ── Strategy 5: "room X" pattern — match by ordinal position ─────────────
+    # e.g. "room 1" → first room, "room 2" → second room (when names don't contain those numbers)
+    room_refs = re.findall(r'room\s+(\d+)', norm_query)
+    if len(room_refs) >= 2:
+        room_locs = [l for l in locations if l.category == "room"]
+        loc_a = _match_by_number(room_refs[0], room_locs) or _match_by_ordinal(int(room_refs[0]), room_locs)
+        loc_b = _match_by_number(room_refs[1], room_locs) or _match_by_ordinal(int(room_refs[1]), room_locs)
+        if loc_a and loc_b and loc_a.id != loc_b.id:
+            from_loc, to_loc = _order_from_to(norm_query, loc_a, loc_b)
+            logger.debug("[INDOOR NLP] Strategy 5 (room refs) matched: %s → %s",
+                         from_loc.name, to_loc.name)
+            return from_loc, to_loc
+
+    logger.warning("[INDOOR NLP] All strategies failed for: %r (norm: %r)", query_text, norm_query)
+    raise RafiqException(
+        message=f"Could not understand route request: '{query_text}'. "
+                f"Available locations: {[l.name for l in locations]}",
+        spoken_message="I could not understand. Please say something like: "
+                       "I am in room one and I want to go to room three.",
+        status_code=422,
+    )
+
+
+# ── Arabic translation helper ─────────────────────────────────────────────────
+
+def _translate_arabic(text: str) -> str:
+    """
+    Translate Arabic number words and location keywords to English tokens
+    so the rest of the NLP pipeline (which works on English) can process them.
+    """
+    result = text
+
+    # Replace multi-word Arabic number phrases first (e.g. "أحد عشر" = 11)
+    for ar, en in sorted(_AR_NUMBER_WORDS.items(), key=lambda x: -len(x[0])):
+        result = result.replace(ar, en)
+
+    # Replace Arabic location keywords
+    for ar, en in sorted(_AR_LOCATION_KEYWORDS.items(), key=lambda x: -len(x[0])):
+        result = result.replace(ar, en)
+
+    # Strip Arabic navigation phrases
+    for phrase in sorted(_AR_NAV_PHRASES, key=lambda x: -len(x)):
+        result = result.replace(phrase, " ")
+
+    return result.strip()
+
+
+# ── Fuzzy matching helpers ────────────────────────────────────────────────────
+
+def _fuzzy_match(fragment: str, locations: List[IndoorLocation]) -> Optional[IndoorLocation]:
+    """
+    Match a text fragment to the best location using multiple strategies:
+    1. Exact alias match
+    2. Alias substring containment
+    3. Number match (single or multi digit in fragment vs location name)
+    4. Token overlap score (lowest priority — breaks ties only)
+    """
+    norm = _normalize_route_text(fragment)
+    if not norm:
+        return None
+
+    # ── Priority 1: exact alias ───────────────────────────────────────────────
+    for loc in locations:
+        if norm in _location_aliases(loc):
+            return loc
+
+    # ── Priority 2: alias substring containment ───────────────────────────────
+    best_contain_loc   = None
+    best_contain_score = -1
+    for loc in locations:
+        for alias in _location_aliases(loc):
+            if alias in norm or norm in alias:
+                score = len(alias)
+                if score > best_contain_score:
+                    best_contain_score = score
+                    best_contain_loc   = loc
+
+    # ── Priority 3: number match ──────────────────────────────────────────────
+    # Extract all numbers (any length) from fragment and try to match rooms
+    num_loc = None
+    best_num_score = -1
+    for num in re.findall(r'\b(\d+)\b', norm):
+        candidate = _match_by_number(num, locations)
+        if candidate:
+            score = len(num)
+            if score > best_num_score:
+                best_num_score = score
+                num_loc = candidate
+
+    # Number match wins over substring containment when the number is specific
+    if num_loc and best_num_score >= 1:
+        # But don't override if substring match is clearly stronger (longer alias)
+        if best_contain_score < best_num_score + 4:
+            return num_loc
+
+    if best_contain_loc:
+        return best_contain_loc
+
+    # ── Priority 4: token overlap (last resort) ───────────────────────────────
+    frag_tokens = set(norm.split()) - {"room", "the", "a", "an", "to", "in", "at"}
+    best_overlap_loc   = None
+    best_overlap_score = -1
+    for loc in locations:
+        for alias in _location_aliases(loc):
+            overlap = frag_tokens & set(alias.split())
+            if overlap:
+                score = sum(len(w) for w in overlap)
+                if score > best_overlap_score:
+                    best_overlap_score = score
+                    best_overlap_loc   = loc
+
+    return best_overlap_loc
+
+
+def _score_all_locations(
+    norm_query: str,
+    locations: List[IndoorLocation],
+) -> List[tuple[int, IndoorLocation]]:
+    """Score every location against the full query, return sorted descending."""
+    scores: List[tuple[int, IndoorLocation]] = []
+    tokens = set(norm_query.split())
+
+    for loc in locations:
+        best = 0
+        for alias in _location_aliases(loc):
+            # Direct substring hit
+            if alias in norm_query:
+                best = max(best, len(alias) + 20)
+                continue
+            # Token overlap
+            overlap = tokens & set(alias.split())
+            if overlap:
+                best = max(best, len(" ".join(overlap)) + 5)
+
+        # Digit match bonus (2+ digits only to avoid false single-digit matches)
+        numbers = re.findall(r'\b(\d{2,})\b', norm_query)
+        for num in numbers:
+            if re.search(r'\b' + re.escape(num) + r'\b', _normalize_route_text(loc.name)):
+                best = max(best, len(num) + 15)
+
+        if best > 0:
+            scores.append((best, loc))
+
+    scores.sort(key=lambda x: -x[0])
+    return scores
+
+
+def _find_first_in_text(norm_query: str, loc: IndoorLocation) -> int:
+    """Return the earliest character position where any alias of loc appears."""
+    earliest = len(norm_query)
+    for alias in _location_aliases(loc):
+        idx = norm_query.find(alias)
+        if 0 <= idx < earliest:
+            earliest = idx
+    # Also check bare room numbers extracted from name (including single-digit suffix)
+    clean_name = _normalize_route_text(re.sub(r'\s*\(.*?\)', '', loc.name))
+    for num in re.findall(r'\b(\d+)\b', clean_name):
+        # Try single digit suffix match positions
+        for m in re.finditer(r'\b' + re.escape(num[-1]) + r'\b', norm_query):
+            if m.start() < earliest:
+                earliest = m.start()
+        for m in re.finditer(r'\b' + re.escape(num) + r'\b', norm_query):
+            if m.start() < earliest:
+                earliest = m.start()
+    return earliest
+
+
+def _match_by_number(num: str, locations: List[IndoorLocation]) -> Optional[IndoorLocation]:
+    """
+    Find a location whose *name* contains the given number as a whole word.
+    Only searches names (not IDs) to avoid matching sequence numbers like exit-1.
+    """
+    # Exact whole-word match in name only
+    exact = []
+    for loc in locations:
+        norm_name = _normalize_route_text(re.sub(r'\s*\(.*?\)', '', loc.name))
+        if re.search(r'\b' + re.escape(num) + r'\b', norm_name):
+            exact.append(loc)
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return exact[0]  # caller handles ordering
+
+    # For single digits: match rooms whose name number ends with this digit,
+    # but ONLY among rooms (category == "room") to avoid exit-1, toilet-1 etc.
+    if len(num) == 1:
+        suffix_matches = []
+        for loc in locations:
+            if loc.category != "room":
+                continue
+            norm_name = _normalize_route_text(re.sub(r'\s*\(.*?\)', '', loc.name))
+            nums_in_name = re.findall(r'\b(\d+)\b', norm_name)
+            for n in nums_in_name:
+                if n.endswith(num):
+                    suffix_matches.append(loc)
+                    break
+        if len(suffix_matches) == 1:
+            return suffix_matches[0]
+        # Multiple or zero — too ambiguous
+        return None
+
+    return None
+
+
+def _match_by_ordinal(n: int, room_locs: List[IndoorLocation]) -> Optional[IndoorLocation]:
+    """Return the n-th room (1-indexed) from the list, or None if out of range."""
+    if 1 <= n <= len(room_locs):
+        return room_locs[n - 1]
+    return None
+
+
+def _order_from_to(
+    norm_query: str,
+    loc_a: IndoorLocation,
+    loc_b: IndoorLocation,
+) -> tuple[IndoorLocation, IndoorLocation]:
+    """
+    Given two matched locations, decide which is FROM and which is TO
+    by looking for navigation cues in the normalised query text.
+
+    Rules (checked in order):
+    1. "i am in/at X" or "i'm in X" or "in X" → X is FROM
+    2. "go to / want to go to / need to go to Y" → Y is TO
+    3. "from X to Y" → positional order in text
+    4. Fallback: whichever appears first in text is FROM
+    """
+    # Patterns that introduce the FROM location
+    from_cues = re.compile(
+        r'\b(?:i am|i\'m|im|i\'m)\s+(?:in|at|inside|near|by)\s+(.+?)(?:\s+(?:and|i want|i need|go|$))',
+        re.IGNORECASE,
+    )
+    # Patterns that introduce the TO location
+    to_cues = re.compile(
+        r'\b(?:go to|going to|want to go to|want to go|need to go to|need to go|'
+        r'take me to|navigate to|head to|i want to go to|i want to go|'
+        r'i need to go to|i need to go)\s+(.+?)(?:\s+(?:and|i am|i\'m|$)|$)',
+        re.IGNORECASE,
+    )
+
+    def name_in_fragment(loc: IndoorLocation, fragment: str) -> bool:
+        frag_norm = _normalize_route_text(fragment)
+        return any(alias in frag_norm or frag_norm in alias
+                   for alias in _location_aliases(loc))
+
+    # Try FROM cue
+    fm = from_cues.search(norm_query)
+    if fm:
+        fragment = fm.group(1)
+        if name_in_fragment(loc_a, fragment):
+            return loc_a, loc_b
+        if name_in_fragment(loc_b, fragment):
+            return loc_b, loc_a
+
+    # Try TO cue
+    tm = to_cues.search(norm_query)
+    if tm:
+        fragment = tm.group(1)
+        if name_in_fragment(loc_a, fragment):
+            return loc_b, loc_a
+        if name_in_fragment(loc_b, fragment):
+            return loc_a, loc_b
+
+    # Fallback: text position order
+    pos_a = _find_first_in_text(norm_query, loc_a)
+    pos_b = _find_first_in_text(norm_query, loc_b)
+    if pos_a <= pos_b:
+        return loc_a, loc_b
+    return loc_b, loc_a
+
+
+def _extract_location_candidates(query_text: str, locations: List[IndoorLocation]) -> List[IndoorLocation]:
+    normalized_text = _normalize_route_text(query_text)
+    matches: List[tuple[int, int, IndoorLocation]] = []
+
+    for location in locations:
+        aliases = _location_aliases(location)
+        best_index = None
+        best_length = 0
+        for alias in aliases:
+            index = normalized_text.find(alias)
+            if index < 0:
+                continue
+            if best_index is None or index < best_index or (index == best_index and len(alias) > best_length):
+                best_index = index
+                best_length = len(alias)
+        if best_index is not None:
+            matches.append((best_index, -best_length, location))
+
+    matches.sort(key=lambda item: (item[0], item[1]))
+
+    ordered: List[IndoorLocation] = []
+    seen_ids = set()
+    for _, _, location in matches:
+        if location.id in seen_ids:
+            continue
+        ordered.append(location)
+        seen_ids.add(location.id)
+    return ordered
+
+
+def _match_location_text(value: str, locations: List[IndoorLocation]) -> Optional[IndoorLocation]:
+    normalized_value = _normalize_route_text(value)
+    best_location = None
+    best_score = -1
+
+    for location in locations:
+        for alias in _location_aliases(location):
+            if alias == normalized_value:
+                return location
+            if alias in normalized_value or normalized_value in alias:
+                score = len(alias)
+                if score > best_score:
+                    best_location = location
+                    best_score = score
+
+    return best_location
+
+
+def _location_aliases(location: IndoorLocation) -> List[str]:
+    """All normalised text forms of a location's name and id."""
+    # Strip area annotation like "(8.5 m²)" from display names
+    clean_name = re.sub(r'\s*\(.*?\)', '', location.name).strip()
+
+    raw_names = {clean_name, clean_name.replace("-", " ")}
+    raw_ids   = {location.id, location.id.replace("-", " ")}
+
+    name_aliases = [_normalize_route_text(a) for a in raw_names if a]
+    id_aliases   = [_normalize_route_text(a) for a in raw_ids   if a]
+
+    aliases = list(dict.fromkeys(name_aliases + id_aliases))
+
+    # Extract room-number portion from the *name only* (not ID),
+    # and only for multi-digit numbers (2+ digits) to avoid false matches
+    # on sequence numbers like the "1" in "exit-1" or "toilet-1".
+    for alias in name_aliases:
+        for num in re.findall(r'\b(\d{2,})\b', alias):
+            aliases.append(num)
+
+    # Add category keyword alone ONLY for non-room categories
+    # Skip "room" because it appears in every phrase
+    if location.category and location.category not in ("room", "other"):
+        aliases.append(location.category.lower())
+
+    return list(dict.fromkeys(a for a in aliases if a))
+
+
+def _normalize_route_text(value: str) -> str:
+    """Lowercase, remove punctuation, convert number-words to digits."""
+    text = value.lower().replace("-", " ").replace("_", " ")
+    # Strip area annotations like "(8.5 m²)" so they don't confuse matching
+    text = re.sub(r'\(\s*[\d.]+\s*m[²2]?\s*\)', ' ', text)
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+
+    def replace_number_word(match: re.Match) -> str:
+        return _NUMBER_WORDS.get(match.group(0), match.group(0))
+
+    text = re.sub(
+        r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|"
+        r"eighteen|nineteen|twenty)\b",
+        replace_number_word,
+        text,
+    )
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

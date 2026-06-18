@@ -205,8 +205,21 @@ class IndoorRouteRequest(BaseModel):
     """Request to find a path between two locations."""
 
     floor_plan_id: str
-    from_location_id: str
-    to_location_id: str
+    from_location_id: Optional[str] = Field(
+        None,
+        description="Starting location ID. Optional when query_text is provided.",
+    )
+    to_location_id: Optional[str] = Field(
+        None,
+        description="Destination location ID. Optional when query_text is provided.",
+    )
+    query_text: Optional[str] = Field(
+        None,
+        description=(
+            "Natural-language route request, for example: '"
+            "I am in room one and I want to go to room three'."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -214,6 +227,7 @@ class IndoorRouteRequest(BaseModel):
                 "floor_plan_id": "abc12345",
                 "from_location_id": "room-101",
                 "to_location_id": "main-exit",
+                "query_text": "I am in room one and I want to go to room three",
             }
         }
     }
@@ -241,3 +255,25 @@ class IndoorRouteResponse(BaseModel):
     total_distance_meters: float
     speech: str
     processing_time_ms: float
+
+
+class VoiceRouteResponse(BaseModel):
+    """
+    Response for the voice-driven indoor route endpoint.
+
+    Combines the STT transcript, the resolved route, and the TTS audio URL
+    so the client can display what was heard and immediately play directions.
+    """
+
+    transcript: str = Field(
+        ...,
+        description="The text that was transcribed from the user's audio.",
+    )
+    detected_language: str = Field(
+        ...,
+        description="Language detected by the STT engine, e.g. 'en' or 'ar'.",
+    )
+    route: IndoorRouteResponse = Field(
+        ...,
+        description="The resolved indoor route (path, steps, speech, etc.).",
+    )
