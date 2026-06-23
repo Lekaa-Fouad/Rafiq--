@@ -1,78 +1,35 @@
-"""
-routers/detection.py — Object Detection endpoint stub.
+from fastapi import APIRouter, Request, UploadFile, File, HTTPException
+from services.detection_service import DetectionService
+import cv2
+import numpy as np
 
-TO IMPLEMENT
-------------
-See `services/detection_service.py` for the full implementation guide.
+router = APIRouter(prefix="/detection", tags=["Object Detection"])
 
-Quick summary:
-  1. pip install ultralytics
-  2. Load YOLOv8 at startup: app.state.yolo_model = YOLO("yolov8n.pt")
-  3. Replace stub body with `detection_service.detect_objects(image_bytes, yolo_model)`
-  4. Return RafiqResponse[DetectionResponse] with the real result.
+detection_service = DetectionService()
 
-Follow the same patterns as `routers/voice.py`.
-"""
+@router.post("/process-frame")
+async def analyze_frame(request: Request, file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-import logging
+        if frame is None:
+            raise HTTPException(status_code=400, detail="Invalid image file")
 
-from fastapi import APIRouter, Depends, File, UploadFile
+        yolo_model = request.app.state.yolo_model
+        midas_model = request.app.state.midas_model
+        midas_transforms = request.app.state.midas_transforms
+        device = request.app.state.device
 
-from core.dependencies import verify_api_key
-from core.responses import RafiqResponse, success_response
+        events = detection_service.process_frame(
+            frame, yolo_model, midas_model, midas_transforms, device
+        )
 
-logger = logging.getLogger(__name__)
+        return {"status": "success", "detections": events}
 
-router = APIRouter(
-    prefix="/detect",
-    tags=["Object Detection"],
-    dependencies=[Depends(verify_api_key)],
-)
-
-
-@router.post(
-    "",
-    summary="Detect objects in image (YOLOv8) — coming soon",
-    response_model=RafiqResponse[dict],
-    responses={
-        200: {"description": "Stub response — not yet implemented."},
-        401: {"description": "Invalid or missing API key."},
-    },
-)
-async def detect_objects(
-    image: UploadFile = File(..., description="Image file to run object detection on."),
-):
-    """
-    ## Object Detection
-
-    **[STUB — Not yet implemented]**
-
-    ### Planned behaviour
-    - Accept a JPEG/PNG image upload.
-    - Run **YOLOv8n** inference at confidence threshold 0.4.
-    - For each detected object:
-      - Extract label (COCO class name), confidence, bounding box (x1,y1,x2,y2).
-      - Estimate distance: 'near' (bbox area > 30% of image), 'mid' (> 10%), 'far' otherwise.
-    - Sort objects left-to-right by x1 coordinate.
-    - Generate `spoken_summary` in natural language:
-      e.g. "I see a chair on your left and a door ahead."
-    - Return DetectionResponse with full object list and summary.
-
-    ### Implementation steps
-    See `services/detection_service.py` for the step-by-step guide.
-
-    ### Expected response model
-    ```python
-    class DetectionResponse(BaseModel):
-        objects: List[DetectedObject]
-        object_count: int
-        spoken_summary: str
-        processing_time_ms: float
-    ```
-    """
-    logger.info("[DETECTION] Stub endpoint called")
-    return success_response(
-        data={"status": "not_implemented"},
-        message="Object detection endpoint is not yet implemented.",
-        spoken_message="This feature is coming soon.",
-    )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    finally:
+        await file.close()
