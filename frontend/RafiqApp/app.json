@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Rafiq",
+    "slug": "rafiqapp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0066FF"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rafiq.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Rafiq needs your location to show you on the map and calculate routes.",
+        "NSLocationAlwaysUsageDescription": "Rafiq needs your location to guide you while walking.",
+        "NSCameraUsageDescription": "Rafiq needs camera access to detect objects around you.",
+        "NSMicrophoneUsageDescription": "Rafiq needs microphone access for voice navigation."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0066FF"
+      },
+      "package": "com.rafiq.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      ["expo-location", {
+        "locationAlwaysAndWhenInUsePermission": "Rafiq needs your location to show routes on the map."
+      }],
+      ["expo-camera", {
+        "cameraPermission": "Rafiq needs camera access to detect objects around you."
+      }],
+      ["expo-av", {
+        "microphonePermission": "Rafiq needs microphone access for voice navigation."
+      }]
+    ]
+  }
+}
