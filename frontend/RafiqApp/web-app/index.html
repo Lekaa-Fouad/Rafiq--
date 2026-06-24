@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Rafiq Navigation</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #fff;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Map ── */
+    #map { flex: 1; min-height: 0; }
+
+    /* ── Bottom panel ── */
+    #panel {
+      background: #fff;
+      padding: 14px 16px 20px;
+      border-top-left-radius: 20px;
+      border-top-right-radius: 20px;
+      box-shadow: 0 -4px 20px rgba(0,0,0,0.12);
+      max-height: 55vh;
+      overflow-y: auto;
+    }
+
+    /* Status text */
+    #status {
+      font-size: 13px;
+      color: #555;
+      text-align: center;
+      margin-bottom: 10px;
+      font-style: italic;
+      min-height: 18px;
+    }
+
+    /* ── Search row: text input + Go + Mic ── */
+    #search-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+
+    #dest-input {
+      flex: 1;
+      border: 1.5px solid #ddd;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 15px;
+      background: #f8f8f8;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #dest-input:focus { border-color: #0066FF; }
+
+    #go-btn {
+      background: #0066FF;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 10px 18px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #go-btn:disabled { background: #99bbff; cursor: not-allowed; }
+
+    /* Mic button */
+    #mic-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: none;
+      background: #0066FF;
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.2s, transform 0.1s;
+    }
+    #mic-btn:hover { background: #0052cc; }
+    #mic-btn.recording {
+      background: #cc0000;
+      animation: pulse 1s infinite;
+    }
+    #mic-btn:disabled { background: #aaa; cursor: not-allowed; }
+
+    @keyframes pulse {
+      0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(204,0,0,0.4); }
+      70%  { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(204,0,0,0); }
+      100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(204,0,0,0); }
+    }
+
+    /* Recording indicator */
+    #recording-bar {
+      display: none;
+      background: #fff0f0;
+      border: 1px solid #ffcccc;
+      border-radius: 10px;
+      padding: 8px 14px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      color: #cc0000;
+      text-align: center;
+    }
+    #recording-bar.visible { display: block; }
+
+    /* ── Route summary ── */
+    #summary {
+      background: #f0f6ff;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+      display: none;
+    }
+    #summary-dest { font-size: 15px; font-weight: 700; color: #003399; margin-bottom: 6px; }
+    #summary-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+    .badge {
+      background: #0066FF;
+      color: #fff;
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    /* ── Steps ── */
+    #steps-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #333;
+      margin-bottom: 8px;
+      display: none;
+    }
+    #steps-list { list-style: none; padding-bottom: 8px; }
+    .step-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .step-num {
+      width: 22px; height: 22px; border-radius: 11px;
+      background: #0066FF; color: #fff;
+      font-size: 11px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; margin-top: 1px;
+    }
+    .step-instruction { font-size: 13px; color: #222; line-height: 1.4; }
+    .step-meta { font-size: 11px; color: #888; margin-top: 2px; }
+
+    /* ── Transcript bubble ── */
+    #transcript-box {
+      display: none;
+      background: #f0fff4;
+      border: 1px solid #b2dfdb;
+      border-radius: 10px;
+      padding: 8px 14px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      color: #1b5e20;
+    }
+    #transcript-box.visible { display: block; }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="panel">
+  <div id="status">Getting your location...</div>
+
+  <!-- Recording indicator -->
+  <div id="recording-bar">🔴 Recording... tap the mic again to stop</div>
+
+  <!-- Transcript bubble -->
+  <div id="transcript-box"></div>
+
+  <!-- Search row: text input + Go button + Mic button -->
+  <div id="search-row">
+    <input
+      id="dest-input"
+      type="text"
+      placeholder="Type destination or tap 🎤 to speak"
+      onkeydown="if(event.key==='Enter') getRouteByText()"
+    />
+    <button id="go-btn" onclick="getRouteByText()">Go</button>
+    <button id="mic-btn" onclick="toggleMic()" title="Speak your destination">🎤</button>
+  </div>
+
+  <!-- Route summary -->
+  <div id="summary">
+    <div id="summary-dest"></div>
+    <div id="summary-badges">
+      <span class="badge" id="badge-dist"></span>
+      <span class="badge" id="badge-time"></span>
+    </div>
+  </div>
+
+  <!-- Steps title -->
+  <div id="steps-title">Directions</div>
+  <ul id="steps-list"></ul>
+</div>
+
+<script>
+  // ── CONFIG ────────────────────────────────────────────────────────────────
+  const BACKEND = "http://192.168.100.8:8000";
+  const API_KEY = "123";
+  // ─────────────────────────────────────────────────────────────────────────
+
+  var myLocation = null;
+  var myMarker   = null;
+  var destMarker = null;
+  var routeLine  = null;
+
+  // ── Map setup ─────────────────────────────────────────────────────────────
+  var map = L.map('map').setView([30.0444, 31.2357], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 19
+  }).addTo(map);
+
+  var redIcon = L.icon({
+    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+    iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[1,-34], shadowSize:[41,41]
+  });
+
+  // ── Get user GPS location ─────────────────────────────────────────────────
+  setStatus("Getting your location...");
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      function(pos) {
+        myLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setStatus('Type a destination or tap 🎤 to speak');
+        if (myMarker) map.removeLayer(myMarker);
+        myMarker = L.circleMarker([myLocation.lat, myLocation.lng], {
+          radius: 10, fillColor: '#0066FF', color: '#fff', weight: 3, fillOpacity: 1
+        }).addTo(map).bindPopup('You are here').openPopup();
+        map.setView([myLocation.lat, myLocation.lng], 15);
+      },
+      function() {
+        myLocation = { lat: 30.0444, lng: 31.2357 };
+        setStatus('Location unavailable — using Cairo. Type or speak a destination.');
+        map.setView([30.0444, 31.2357], 13);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  } else {
+    myLocation = { lat: 30.0444, lng: 31.2357 };
+    setStatus('Type a destination or tap 🎤 to speak');
+  }
+
+  // ── Draw route on map ─────────────────────────────────────────────────────
+  function drawRoute(data) {
+    // Remove old markers/line
+    if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
+    if (routeLine)  { map.removeLayer(routeLine);  routeLine  = null; }
+    document.getElementById('summary').style.display = 'none';
+    document.getElementById('steps-title').style.display = 'none';
+    document.getElementById('steps-list').innerHTML = '';
+
+    // Destination marker (red)
+    destMarker = L.marker(
+      [data.destination_location.lat, data.destination_location.lng],
+      { icon: redIcon }
+    ).addTo(map).bindPopup(data.destination_name);
+
+    // Route polyline (blue)
+    if (data.polyline && data.polyline.length >= 2) {
+      var coords = data.polyline.map(function(p) { return [p.lat, p.lng]; });
+      routeLine = L.polyline(coords, { color: '#0066FF', weight: 5, opacity: 0.85 }).addTo(map);
+      map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
+    }
+
+    // Summary box
+    var km  = (data.total_distance_meters / 1000).toFixed(1);
+    var min = Math.round(data.total_duration_seconds / 60);
+    document.getElementById('summary-dest').textContent = '📍 ' + data.destination_name;
+    document.getElementById('badge-dist').textContent   = '🚶 ' + km + ' km';
+    document.getElementById('badge-time').textContent   = '⏱️ ' + min + ' min';
+    document.getElementById('summary').style.display    = 'block';
+
+    // Steps list
+    var list = document.getElementById('steps-list');
+    data.steps.forEach(function(step, i) {
+      var li = document.createElement('li');
+      li.className = 'step-row';
+      li.innerHTML =
+        '<div class="step-num">' + (i + 1) + '</div>' +
+        '<div>' +
+          '<div class="step-instruction">' + step.instruction + '</div>' +
+          '<div class="step-meta">' +
+            Math.round(step.distance_meters) + ' m · ' +
+            Math.round(step.duration_seconds / 60) + ' min' +
+          '</div>' +
+        '</div>';
+      list.appendChild(li);
+    });
+    document.getElementById('steps-title').style.display = 'block';
+
+    // Speak the summary
+    speak(data.speech);
+    setStatus(data.speech);
+  }
+
+  // ── Option A: Get route by typing ─────────────────────────────────────────
+  async function getRouteByText() {
+    var dest = document.getElementById('dest-input').value.trim();
+    if (!dest) { alert('Please type a destination.'); return; }
+    if (!myLocation) { alert('Still getting your location...'); return; }
+
+    setBusy(true);
+    setStatus('Getting route to "' + dest + '"...');
+    hideTranscript();
+
+    try {
+      var res = await fetch(BACKEND + '/mapping/route', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+        body: JSON.stringify({ origin: myLocation, destination_name: dest })
+      });
+      var json = await res.json();
+      if (!json.success) throw new Error(json.message || 'Failed');
+      drawRoute(json.data);
+    } catch(err) {
+      setStatus('Error: ' + err.message);
+      alert('Could not get route:\n' + err.message);
+    }
+    setBusy(false);
+  }
+
+  // ── Option B: Get route by voice ──────────────────────────────────────────
+  var mediaRecorder = null;
+  var audioChunks   = [];
+  var isRecording   = false;
+
+  async function toggleMic() {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }
+
+  async function startRecording() {
+    if (!myLocation) { alert('Still getting your location...'); return; }
+
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+
+      mediaRecorder.ondataavailable = function(e) {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = async function() {
+        // Stop all tracks to release mic
+        stream.getTracks().forEach(function(t) { t.stop(); });
+
+        var blob = new Blob(audioChunks, { type: 'audio/webm' });
+        await sendVoiceToBackend(blob);
+      };
+
+      mediaRecorder.start();
+      isRecording = true;
+
+      // Update UI
+      document.getElementById('mic-btn').classList.add('recording');
+      document.getElementById('mic-btn').textContent = '⏹';
+      document.getElementById('recording-bar').classList.add('visible');
+      setStatus('🔴 Recording... tap ⏹ to stop and get directions');
+
+    } catch(err) {
+      alert('Microphone access denied.\nPlease allow microphone access in your browser.');
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+    }
+    isRecording = false;
+
+    // Update UI
+    document.getElementById('mic-btn').classList.remove('recording');
+    document.getElementById('mic-btn').textContent = '🎤';
+    document.getElementById('recording-bar').classList.remove('visible');
+    setStatus('Processing your voice...');
+  }
+
+  async function sendVoiceToBackend(audioBlob) {
+    setBusy(true);
+    setStatus('Transcribing your voice...');
+    hideTranscript();
+
+    try {
+      // Build multipart form data
+      var formData = new FormData();
+      formData.append('audio', audioBlob, 'recording.webm');
+      formData.append('origin_lat', myLocation.lat.toString());
+      formData.append('origin_lng', myLocation.lng.toString());
+
+      var res = await fetch(BACKEND + '/mapping/voice-navigate', {
+        method: 'POST',
+        headers: { 'X-API-Key': API_KEY },
+        body: formData
+      });
+
+      var json = await res.json();
+      if (!json.success) throw new Error(json.message || 'Failed');
+
+      var data = json.data;
+
+      // Show what was heard
+      showTranscript(
+        '🎤 You said: "' + data.transcript + '"' +
+        (data.destination_heard !== data.transcript
+          ? '\n📍 Destination: "' + data.destination_heard + '"'
+          : '')
+      );
+
+      // Fill the text input with what was heard
+      document.getElementById('dest-input').value = data.destination_heard;
+
+      // Draw the route
+      drawRoute(data.route);
+
+    } catch(err) {
+      setStatus('Error: ' + err.message);
+      alert('Voice navigation failed:\n' + err.message);
+    }
+    setBusy(false);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function setStatus(msg) {
+    document.getElementById('status').textContent = msg;
+  }
+
+  function setBusy(busy) {
+    document.getElementById('go-btn').disabled  = busy;
+    document.getElementById('mic-btn').disabled = busy && !isRecording;
+    document.getElementById('go-btn').textContent = busy ? '...' : 'Go';
+  }
+
+  function showTranscript(text) {
+    var box = document.getElementById('transcript-box');
+    box.textContent = text;
+    box.classList.add('visible');
+  }
+
+  function hideTranscript() {
+    document.getElementById('transcript-box').classList.remove('visible');
+  }
+
+  function speak(text) {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = 'en-US';
+      window.speechSynthesis.speak(u);
+    }
+  }
+</script>
+</body>
+</html>

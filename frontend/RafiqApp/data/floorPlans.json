@@ -1,0 +1,176 @@
+[
+  {
+    "id": "example-001",
+    "name": "Demo Building – Floor 1",
+    "image_url": "/floor_images/demo_floor.png",
+    "width": 800,
+    "height": 600,
+    "locations": [
+      {
+        "id": "room-101-0",
+        "name": "Room 101 (8.5 m²)",
+        "point": {
+          "x": 120,
+          "y": 340
+        },
+        "category": "room",
+        "bounds": {
+          "x1": 100,
+          "y1": 300,
+          "x2": 200,
+          "y2": 400
+        },
+        "door_side": "bottom",
+        "door_position": "center",
+        "door": {
+          "x": 150,
+          "y": 400
+        },
+        "area_m2": 8.5
+      }
+    ]
+  },
+  {
+    "id": "1780524466786",
+    "name": "1",
+    "corridor_y": 300,
+    "image_url": "/floor_images/Untitled.png",
+    "width": 800,
+    "height": 600,
+    "locations": [
+      {
+        "id": "1-0",
+        "name": "1",
+        "point": {
+          "x": 213,
+          "y": 154
+        },
+        "door_side": "bottom",
+        "door_position": "center",
+        "category": "room"
+      }
+    ]
+  },
+  {
+    "id": "1780524524385",
+    "name": "e1",
+    "corridor_y": 300,
+    "image_url": "/floor_images/Untitled.png",
+    "width": 800,
+    "height": 600,
+    "locations": [
+      {
+        "id": "1-0",
+        "name": "1",
+        "point": {
+          "x": 208,
+          "y": 146
+        },
+        "door_side": "bottom",
+        "door_position": "left",
+        "bounds": {
+          "x1": 129,
+          "y1": 59,
+          "x2": 300,
+          "y2": 207
+        },
+        "category": "room"
+      },
+      {
+        "id": "2-1",
+        "name": "2",
+        "point": {
+          "x": 626,
+          "y": 133
+        },
+        "door_side": "bottom",
+        "door_position": "right",
+        "bounds": {
+          "x1": 529,
+          "y1": 68,
+          "x2": 804,
+          "y2": 171
+        },
+        "category": "room"
+      }
+    ]
+  },
+  {
+    "id": "1780524925751",
+    "name": "e2",
+    "corridor_y": 300,
+    "image_url": "/floor_images/Untitled.png",
+    "width": 800,
+    "height": 600,
+    "locations": [
+      {
+        "id": "1-0",
+        "name": "1",
+        "point": {
+          "x": 207,
+          "y": 138
+        },
+        "door_side": "bottom",
+        "door_position": "center",
+        "bounds": {
+          "x1": 127,
+          "y1": 60,
+          "x2": 304,
+          "y2": 215
+        },
+        "category": "room"
+      },
+      {
+        "id": "2-1",
+        "name": "2",
+        "point": {
+          "x": 954,
+          "y": 119
+        },
+        "door_side": "bottom",
+        "door_position": "right",
+        "bounds": {
+          "x1": 812,
+          "y1": 57,
+          "x2": 1089,
+          "y2": 203
+        },
+        "category": "room"
+      },
+      {
+        "id": "e-2",
+        "name": "e",
+        "point": {
+          "x": 959,
+          "y": 462
+        },
+        "door_side": "top",
+        "door_position": "left",
+        "bounds": {
+          "x1": 836,
+          "y1": 369,
+          "x2": 1094,
+          "y2": 559
+        },
+        "category": "exit"
+      },
+      {
+        "id": "3-3",
+        "name": "3",
+        "point": {
+          "x": 669,
+          "y": 508
+        },
+        "door_side": "top",
+        "door_position": "left",
+        "bounds": {
+          "x1": 501,
+          "y1": 362,
+          "x2": 844,
+          "y2": 568
+        },
+        "category": "room"
+      }
+    ]
+  }
+]
