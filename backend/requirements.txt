@@ -18,3 +18,5 @@ httpx==0.27.0
 aiosqlite==0.20.0
 scipy==1.13.0
 easyocr==1.7.2
+ultralytics==8.4.76
+google-cloud-dialogflow==2.47.0
