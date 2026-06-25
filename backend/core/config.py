@@ -1,11 +1,12 @@
 """
 core/config.py — Application settings loaded from environment variables.
 
-All configuration is centralised here. Import `get_settings()` anywhere you
+All configuration is centralised here. Import get_settings() anywhere you
 need a setting; the @lru_cache ensures the .env file is only read once.
 """
 
 from functools import lru_cache
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +35,12 @@ class Settings(BaseSettings):
     TTS_DEFAULT_VOICE: str = "en-US-JennyNeural"
     TTS_DEFAULT_RATE: str = "+0%"
     TTS_DEFAULT_VOLUME: str = "+0%"
+
+    
+    # ── Google-cloud-dialogflow ──────────────────────────────────────────────────────────────
+    
+    GOOGLE_PROJECT_ID: str = os.getenv("GOOGLE_PROJECT_ID", "")
+    GOOGLE_APPLICATION_CREDENTIALS: str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
 
     # ── General ──────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
