@@ -58,9 +58,14 @@ async def transcribe_audio(
 
     try:
         # faster-whisper needs a seekable file path. Write to a temp file.
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+        # On Windows, delete=True locks the file and prevents Whisper from
+        # opening it by name — use delete=False and clean up manually instead.
+        import os
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        try:
             tmp.write(audio_bytes)
             tmp.flush()
+            tmp.close()  # Close so Whisper can open it on Windows
 
             transcribe_kwargs: dict = dict(
                 beam_size=5,
@@ -72,6 +77,11 @@ async def transcribe_audio(
 
             segments, info = whisper_model.transcribe(tmp.name, **transcribe_kwargs)
             segments = list(segments)  # materialise generator before file is deleted
+        finally:
+            try:
+                os.unlink(tmp.name)  # Always delete the temp file
+            except OSError:
+                pass  # If already gone, that's fine
 
         if not segments:
             return {
@@ -103,6 +113,7 @@ async def transcribe_audio(
         raise AudioProcessingError(f"Transcription failed: {exc}") from exc
 
 
+
 # ── Text-to-Speech ────────────────────────────────────────────────────────────
 
 def _detect_language(text: str) -> str:
@@ -130,7 +141,7 @@ async def _synthesise_edge_tts(
     rate: str,
 ) -> bytes:
     """
-    Try synthesising with edge-tts.
+    Synthesise with edge-tts, writing to a temp file to avoid stream truncation.
     Raises AudioProcessingError on failure so the caller can fall back.
     """
     try:
@@ -138,17 +149,28 @@ async def _synthesise_edge_tts(
     except ImportError as exc:
         raise AudioProcessingError("edge-tts is not installed.") from exc
 
+    import os
+
     communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
-    buf = io.BytesIO()
 
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            buf.write(chunk["data"])
+    # Save to a temp file instead of streaming chunks — prevents audio being
+    # cut off at the end on Windows when the stream closes prematurely.
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+    tmp.close()
+    try:
+        await communicate.save(tmp.name)
+        with open(tmp.name, "rb") as f:
+            audio = f.read()
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
 
-    audio = buf.getvalue()
     if not audio:
         raise AudioProcessingError("edge-tts returned empty audio. Voice name may be invalid.")
     return audio
+
 
 
 def _synthesise_gtts(text: str, lang: str) -> bytes:

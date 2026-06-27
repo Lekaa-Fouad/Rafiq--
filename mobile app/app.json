@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "Rafiq",
+    "slug": "rafiq-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0D1117"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rafiq.mobile",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Rafiq needs the microphone so you can speak commands and have conversations. Your voice is processed securely.",
+        "NSCameraUsageDescription": "Rafiq needs the camera to describe what's around you, recognize faces, and read text from signs and documents."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0D1117"
+      },
+      "permissions": [
+        "RECORD_AUDIO",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ],
+      "package": "com.rafiq.mobile"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Rafiq needs the camera to describe what's around you, recognize faces, and read text from signs and documents."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Rafiq needs the microphone so you can speak commands and have conversations. Your voice is processed securely."
+        }
+      ]
+    ],
+    "scheme": "rafiq",
+    "extra": {
+      "apiUrl": "EXPO_PUBLIC_API_URL",
+      "apiKey": "EXPO_PUBLIC_API_KEY",
+      "eas": {
+        "projectId": "rafiq-mobile"
+      }
+    }
+  }
+}

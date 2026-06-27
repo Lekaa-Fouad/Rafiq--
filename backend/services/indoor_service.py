@@ -274,7 +274,14 @@ async def get_indoor_route(
     path  = _build_door_path(from_loc, to_loc, plan.corridor_y)
     dist  = round(_path_length(path) / PIXELS_PER_METRE, 1)
     steps = _build_steps(from_loc, to_loc, path)
-    speech = f"Indoor route from {from_loc.name} to {to_loc.name}: {_fmt(dist)}."
+
+    # Build full spoken script: intro + every step instruction
+    step_instructions = " ".join(s.instruction for s in steps if s.instruction)
+    speech = (
+        f"Navigating from {from_loc.name} to {to_loc.name}. "
+        f"Total distance: {_fmt(dist)}. "
+        f"{step_instructions}"
+    )
 
     elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
     logger.info("[INDOOR] Route %s → %s, %.1f m, %d waypoints",

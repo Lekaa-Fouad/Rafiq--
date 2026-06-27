@@ -20,3 +20,15 @@ backend/test_api.py
 backend/get-pip.py
 venv/
 notes
+
+# Mobile App
+mobile app/node_modules/
+mobile app/.expo/
+mobile app/dist/
+mobile app/npm-debug.*
+mobile app/*.jsc
+mobile app/*.js.map
+mobile app/.env
+mobile app/.env.local
+mobile app/.env.*.local
+mobile app/tsc_output.txt

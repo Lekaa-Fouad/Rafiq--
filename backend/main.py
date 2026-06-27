@@ -253,7 +253,8 @@ from core.config import get_settings
 from core.exceptions import RafiqException
 from core.responses import error_response
 from db import face_db
-from routers import detection, face, health, navigation, ocr, voice, ws as ws_router
+from routers import detection, face, health, indoor, navigation, ocr, voice, ws as ws_router
+from services import indoor_service
 
 # ── Logging Setup ─────────────────────────────────────────────────────────────
 
@@ -321,6 +322,14 @@ async def lifespan(app: FastAPI):
         logger.info("[STARTUP] Face DB tables verified: %s", settings.FACE_DB_PATH)
     except Exception as exc:
         logger.exception("[STARTUP] Failed to initialise face DB: %s", exc)
+
+    # 4b. Create indoor mapping DB tables
+    try:
+        async with aiosqlite.connect(settings.FACE_DB_PATH) as conn:
+            await indoor_service.create_tables(conn)
+        logger.info("[STARTUP] Indoor mapping tables verified.")
+    except Exception as exc:
+        logger.exception("[STARTUP] Failed to initialise indoor mapping tables: %s", exc)
 
     # 5. Load YOLO and MiDaS models (تمت الإضافة هنا)
     try:
@@ -428,6 +437,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # app.include_router(ocr.router)             # /ocr
 app.include_router(detection.router)       # /detect
 app.include_router(navigation.router)      # /navigate
+app.include_router(indoor.router)          # /indoor  ← indoor mapping
 app.include_router(ws_router.router)       # /ws
 app.include_router(health.router)          # /health  — no auth
 app.include_router(voice.router)           # /voice

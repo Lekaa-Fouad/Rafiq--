@@ -103,7 +103,8 @@ class DetectionService:
                     events.append(DetectionEvent(
                         timestamp=now, object_id=track_id, object_name=name,
                         confidence=conf, direction=direction, distance=distance_level,
-                        distance_m=distance_m, motion=motion, speech=message
+                        distance_m=distance_m, motion=motion, speech=message,
+                        bbox=[x1, y1, x2, y2],
                     ))
                 else:
                     prev = self.objects_state[track_id]
@@ -119,7 +120,8 @@ class DetectionService:
                             events.append(DetectionEvent(
                                 timestamp=now, object_id=track_id, object_name=name,
                                 confidence=conf, direction=direction, distance=distance_level,
-                                distance_m=distance_m, motion=motion, speech=message
+                                distance_m=distance_m, motion=motion, speech=message,
+                                bbox=[x1, y1, x2, y2],
                             ))
                             self.objects_state[track_id] = TrackedObjectState(
                                 direction=direction, distance=distance_level,
