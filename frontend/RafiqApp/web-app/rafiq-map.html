@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Rafiq Navigation</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #fff; height: 100vh; display: flex; flex-direction: column; }
+
+    #map { flex: 1; min-height: 0; }
+
+    #panel {
+      background: #fff;
+      padding: 14px 16px 20px;
+      border-top-left-radius: 20px;
+      border-top-right-radius: 20px;
+      box-shadow: 0 -4px 20px rgba(0,0,0,0.12);
+      max-height: 55vh;
+      overflow-y: auto;
+    }
+
+    #status {
+      font-size: 13px;
+      color: #555;
+      text-align: center;
+      margin-bottom: 10px;
+      font-style: italic;
+    }
+
+    #search-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    #dest-input {
+      flex: 1;
+      border: 1.5px solid #ddd;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 15px;
+      background: #f8f8f8;
+      outline: none;
+    }
+    #dest-input:focus { border-color: #0066FF; }
+
+    #go-btn {
+      background: #0066FF;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 10px 20px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      min-width: 60px;
+    }
+    #go-btn:disabled { background: #99bbff; }
+
+    #summary {
+      background: #f0f6ff;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+      display: none;
+    }
+    #summary-dest { font-size: 15px; font-weight: 700; color: #003399; margin-bottom: 6px; }
+    #summary-badges { display: flex; gap: 8px; }
+    .badge {
+      background: #0066FF;
+      color: #fff;
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    #steps-title { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 8px; display: none; }
+    #steps-list { list-style: none; }
+    .step-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .step-num {
+      width: 22px; height: 22px; border-radius: 11px;
+      background: #0066FF; color: #fff;
+      font-size: 11px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; margin-top: 1px;
+    }
+    .step-instruction { font-size: 13px; color: #222; line-height: 1.4; }
+    .step-meta { font-size: 11px; color: #888; margin-top: 2px; }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="panel">
+  <div id="status">Getting your location...</div>
+
+  <div id="search-row">
+    <input id="dest-input" type="text" placeholder="Where do you want to go? e.g. Cairo University"/>
+    <button id="go-btn" onclick="getRoute()">Go</button>
+  </div>
+
+  <div id="summary">
+    <div id="summary-dest"></div>
+    <div id="summary-badges">
+      <span class="badge" id="badge-dist"></span>
+      <span class="badge" id="badge-time"></span>
+    </div>
+  </div>
+
+  <div id="steps-title">Directions</div>
+  <ul id="steps-list"></ul>
+</div>
+
+<script>
+  // ── CONFIG — change this to your computer IP ──────────────────────────────
+  const BACKEND = "http://192.168.100.8:8000";
+  const API_KEY = "123";
+  // ─────────────────────────────────────────────────────────────────────────
+
+  var myLocation = null;
+  var map = L.map('map').setView([30.0444, 31.2357], 13);
+  var myMarker = null;
+  var destMarker = null;
+  var routeLine = null;
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 19
+  }).addTo(map);
+
+  // Red icon for destination
+  var redIcon = L.icon({
+    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+    iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[1,-34], shadowSize:[41,41]
+  });
+
+  // ── Get user location ─────────────────────────────────────────────────────
+  setStatus("Getting your location...");
+
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      function(pos) {
+        myLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setStatus('Type a destination and tap "Go"');
+
+        // Blue dot for user
+        if (myMarker) map.removeLayer(myMarker);
+        myMarker = L.circleMarker([myLocation.lat, myLocation.lng], {
+          radius: 10, fillColor: '#0066FF', color: '#fff', weight: 3, fillOpacity: 1
+        }).addTo(map).bindPopup('You are here');
+
+        map.setView([myLocation.lat, myLocation.lng], 15);
+      },
+      function(err) {
+        myLocation = { lat: 30.0444, lng: 31.2357 }; // Cairo default
+        setStatus('Location unavailable — using Cairo. Type a destination.');
+        map.setView([30.0444, 31.2357], 13);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  } else {
+    myLocation = { lat: 30.0444, lng: 31.2357 };
+    setStatus('Type a destination and tap "Go"');
+  }
+
+  // ── Get route from backend ────────────────────────────────────────────────
+  async function getRoute() {
+    var dest = document.getElementById('dest-input').value.trim();
+    if (!dest) { alert('Please type a destination.'); return; }
+    if (!myLocation) { alert('Still getting your location...'); return; }
+
+    var btn = document.getElementById('go-btn');
+    btn.disabled = true;
+    btn.textContent = '...';
+    setStatus('Getting route...');
+
+    // Clear old route
+    if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
+    if (routeLine)  { map.removeLayer(routeLine);  routeLine = null; }
+    document.getElementById('summary').style.display = 'none';
+    document.getElementById('steps-title').style.display = 'none';
+    document.getElementById('steps-list').innerHTML = '';
+
+    try {
+      var res = await fetch(BACKEND + '/mapping/route', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+        body: JSON.stringify({ origin: myLocation, destination_name: dest })
+      });
+
+      var json = await res.json();
+      if (!json.success) throw new Error(json.message || 'Failed');
+
+      var data = json.data;
+
+      // ── Draw destination marker ──
+      destMarker = L.marker([data.destination_location.lat, data.destination_location.lng], { icon: redIcon })
+        .addTo(map).bindPopup(data.destination_name);
+
+      // ── Draw route polyline ──
+      if (data.polyline && data.polyline.length >= 2) {
+        var coords = data.polyline.map(function(p) { return [p.lat, p.lng]; });
+        routeLine = L.polyline(coords, { color: '#0066FF', weight: 5, opacity: 0.85 }).addTo(map);
+        map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
+      }
+
+      // ── Show summary ──
+      var km = (data.total_distance_meters / 1000).toFixed(1);
+      var min = Math.round(data.total_duration_seconds / 60);
+      document.getElementById('summary-dest').textContent = '📍 ' + data.destination_name;
+      document.getElementById('badge-dist').textContent = '🚶 ' + km + ' km';
+      document.getElementById('badge-time').textContent = '⏱️ ' + min + ' min';
+      document.getElementById('summary').style.display = 'block';
+
+      // ── Show steps ──
+      var list = document.getElementById('steps-list');
+      data.steps.forEach(function(step, i) {
+        var li = document.createElement('li');
+        li.className = 'step-row';
+        li.innerHTML =
+          '<div class="step-num">' + (i+1) + '</div>' +
+          '<div>' +
+            '<div class="step-instruction">' + step.instruction + '</div>' +
+            '<div class="step-meta">' + Math.round(step.distance_meters) + ' m · ' + Math.round(step.duration_seconds/60) + ' min</div>' +
+          '</div>';
+        list.appendChild(li);
+      });
+      document.getElementById('steps-title').style.display = 'block';
+
+      // ── Speak ──
+      setStatus(data.speech);
+      if ('speechSynthesis' in window) {
+        var u = new SpeechSynthesisUtterance(data.speech);
+        u.lang = 'en-US';
+        window.speechSynthesis.speak(u);
+      }
+
+    } catch(err) {
+      setStatus('Error: ' + err.message);
+      alert('Could not get route: ' + err.message);
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Go';
+  }
+
+  // Enter key triggers search
+  document.getElementById('dest-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') getRoute();
+  });
+
+  function setStatus(msg) {
+    document.getElementById('status').textContent = msg;
+  }
+</script>
+</body>
+</html>

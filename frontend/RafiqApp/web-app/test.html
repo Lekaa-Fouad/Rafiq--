@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Connection Test</title>
+  <style>
+    body { font-family: sans-serif; padding: 30px; background: #f0f4ff; }
+    h2 { color: #003399; }
+    .box { background: #fff; border-radius: 12px; padding: 16px; margin: 12px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .ok  { color: #00aa44; font-weight: bold; }
+    .err { color: #cc0000; font-weight: bold; }
+    .pending { color: #888; }
+    button { background: #0066FF; color: #fff; border: none; border-radius: 10px; padding: 12px 24px; font-size: 16px; cursor: pointer; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h2>🔌 Rafiq Connection Test</h2>
+
+  <div class="box">
+    <b>Your device IP:</b><br/>
+    <span id="device-ip" class="pending">checking...</span>
+  </div>
+
+  <div class="box">
+    <b>Backend API (port 8000):</b><br/>
+    <span id="api-status" class="pending">testing...</span>
+  </div>
+
+  <div class="box">
+    <b>Map server (port 8090):</b><br/>
+    <span id="map-status" class="pending">testing...</span>
+  </div>
+
+  <div class="box">
+    <b>Internet (OpenStreetMap):</b><br/>
+    <span id="internet-status" class="pending">testing...</span>
+  </div>
+
+  <button onclick="runTests()">🔄 Run Tests Again</button>
+
+  <div class="box" style="margin-top:20px; background:#fffbe6;">
+    <b>Instructions:</b><br/>
+    If Backend shows ❌ but Map shows ✅ — your phone reached this page but can't reach the backend.<br/><br/>
+    If both show ❌ — your phone is on a different network than your computer.<br/><br/>
+    If all show ✅ — everything works! <a href="http://192.168.100.8:8090">Open the Map →</a>
+  </div>
+
+<script>
+  // Show this device's connection info
+  document.getElementById('device-ip').textContent = window.location.hostname + ' (this page loaded ✅)';
+
+  async function testURL(url, elementId, label) {
+    var el = document.getElementById(elementId);
+    el.className = 'pending';
+    el.textContent = 'testing ' + url + ' ...';
+    try {
+      var controller = new AbortController();
+      var timeout = setTimeout(() => controller.abort(), 5000);
+      var res = await fetch(url, { signal: controller.signal, mode: 'no-cors' });
+      clearTimeout(timeout);
+      el.className = 'ok';
+      el.textContent = '✅ Connected to ' + url;
+    } catch(e) {
+      el.className = 'err';
+      el.textContent = '❌ Cannot reach ' + url + ' (' + e.message + ')';
+    }
+  }
+
+  async function testAPI(url, elementId) {
+    var el = document.getElementById(elementId);
+    el.className = 'pending';
+    el.textContent = 'testing...';
+    try {
+      var controller = new AbortController();
+      var timeout = setTimeout(() => controller.abort(), 5000);
+      var res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
+      var json = await res.json();
+      el.className = 'ok';
+      el.textContent = '✅ Backend is running! Response: ' + JSON.stringify(json).substring(0, 80);
+    } catch(e) {
+      el.className = 'err';
+      el.textContent = '❌ Cannot reach backend: ' + e.message;
+    }
+  }
+
+  function runTests() {
+    testAPI('http://192.168.100.8:8000/health', 'api-status');
+    testURL('http://192.168.100.8:8090', 'map-status');
+    testURL('https://tile.openstreetmap.org', 'internet-status');
+  }
+
+  runTests();
+</script>
+</body>
+</html>

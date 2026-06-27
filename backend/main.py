@@ -38,7 +38,11 @@ from core.config import get_settings
 from core.exceptions import RafiqException
 from core.responses import error_response
 from db import face_db
-from routers import detection, face, health, indoor, navigation, ocr, voice, ws as ws_router
+from dotenv import load_dotenv
+
+load_dotenv()  # Must be called before NLPService is imported
+
+from routers import detection, face, health, indoor, navigation, ocr, voice, ws as ws_router, nlp as nlp_router
 from services import indoor_service
 
 # ── Logging Setup ─────────────────────────────────────────────────────────────
@@ -227,6 +231,7 @@ app.include_router(ws_router.router)       # /ws
 app.include_router(health.router)          # /health  — no auth
 app.include_router(voice.router)           # /voice
 app.include_router(face.router)            # /face
+app.include_router(nlp_router.router)      # /nlp
 
 
 # ── Dev entry point ───────────────────────────────────────────────────────────
