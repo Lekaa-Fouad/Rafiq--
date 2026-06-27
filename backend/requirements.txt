@@ -20,3 +20,5 @@ scipy==1.13.0
 easyocr==1.7.2
 ultralytics==8.4.76
 google-cloud-dialogflow==2.47.0
+arabic-reshaper==3.0.0
+python-bidi==0.6.10
