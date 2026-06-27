@@ -38,11 +38,15 @@ from core.config import get_settings
 from core.exceptions import RafiqException
 from core.responses import error_response
 from db import face_db
+<<<<<<< HEAD
 from dotenv import load_dotenv
 
 load_dotenv()  # Must be called before NLPService is imported
 
 from routers import detection, face, health, indoor, navigation, ocr, voice, ws as ws_router, nlp as nlp_router
+=======
+from routers import detection, face, health, indoor, navigation, ocr, voice, ws as ws_router
+>>>>>>> bcf7dd4 (mobile app)
 from services import indoor_service
 
 # ── Logging Setup ─────────────────────────────────────────────────────────────
@@ -112,7 +116,11 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.exception("[STARTUP] Failed to initialise face DB: %s", exc)
 
+<<<<<<< HEAD
     # 5. Create indoor mapping DB tables
+=======
+    # 4b. Create indoor mapping DB tables
+>>>>>>> bcf7dd4 (mobile app)
     try:
         async with aiosqlite.connect(settings.FACE_DB_PATH) as conn:
             await indoor_service.create_tables(conn)
@@ -120,7 +128,11 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.exception("[STARTUP] Failed to initialise indoor mapping tables: %s", exc)
 
+<<<<<<< HEAD
     # 6. Load YOLO and MiDaS models
+=======
+    # 5. Load YOLO and MiDaS models (تمت الإضافة هنا)
+>>>>>>> bcf7dd4 (mobile app)
     try:
         logger.info("[STARTUP] Loading YOLOv8 and MiDaS models...")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

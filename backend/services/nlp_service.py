@@ -47,10 +47,6 @@ class NLPResult:
 class NLPService:
     """
     Thin wrapper around the Dialogflow ES Sessions client.
-
-    Usage:
-        nlp = NLPService()
-        result = await nlp.detect_intent("وديني المطبخ")
     """
 
     def __init__(self) -> None:
@@ -58,21 +54,24 @@ class NLPService:
         self._language_code: str = os.getenv("DIALOGFLOW_LANGUAGE_CODE", "ar")
         self._session_prefix: str = os.getenv("DIALOGFLOW_SESSION_PREFIX", "rafiq-user")
 
-        # The credentials file path is picked up automatically by the Google
-        # client library via the GOOGLE_APPLICATION_CREDENTIALS env variable.
-        # We validate its presence here for a fast, clear startup error.
         credentials_path = self._require_env("GOOGLE_APPLICATION_CREDENTIALS")
         if not os.path.isfile(credentials_path):
             raise FileNotFoundError(
                 f"Dialogflow credentials file not found at: {credentials_path}"
             )
 
-        self._client = dialogflow.SessionsClient()
+        self._client_instance = None
         logger.info(
-            "NLPService initialised — project='%s', language='%s'",
+            "NLPService initialised (lazy client) — project='%s', language='%s'",
             self._project_id,
             self._language_code,
         )
+
+    @property
+    def _client(self):
+        if self._client_instance is None:
+            self._client_instance = dialogflow.SessionsClient()
+        return self._client_instance
 
     # ------------------------------------------------------------------
     # Public API
@@ -85,20 +84,6 @@ class NLPService:
     ) -> NLPResult:
         """
         Send Arabic text to Dialogflow and return a structured NLPResult.
-
-        Args:
-            text:        Raw Arabic text from the STT module.
-            session_id: Optional session identifier. A new UUID is generated
-                        per call when not supplied, making each request
-                        stateless — suitable for command-style interactions.
-
-        Returns:
-            NLPResult with intent name, confidence score, and parameters.
-
-        Raises:
-            ValueError:        If the text is empty after cleaning.
-            GoogleAPICallError: If Dialogflow returns an API-level error.
-            RuntimeError:      For unexpected failures.
         """
         clean_text = self._clean_text(text)
         if not clean_text:
@@ -111,8 +96,8 @@ class NLPService:
             text=dialogflow.TextInput(
                 text=clean_text,
                 language_code=self._language_code,
-                )
             )
+        )
 
         logger.info(
             "Sending query to Dialogflow — session='%s', text='%s'",
