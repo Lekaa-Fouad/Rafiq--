@@ -168,6 +168,20 @@ async def save_floor_plan(
                 status_code=422,
             )
 
+        # Sanitize door_position — only "left", "center", "right" are valid.
+        # Users often accidentally pass a door_side value (top/bottom/left/right)
+        # here; clamp to "center" instead of crashing.
+        _VALID_DOOR_POSITIONS = {"left", "center", "right"}
+        raw_door_position = loc.get("door_position", "center")
+        if raw_door_position not in _VALID_DOOR_POSITIONS:
+            logger.warning(
+                "[INDOOR] Location '%s' has invalid door_position=%r "
+                "(must be left/center/right). Defaulting to 'center'. "
+                "Did you mean door_side=%r?",
+                loc_id, raw_door_position, raw_door_position,
+            )
+            raw_door_position = "center"
+
         locations.append(IndoorLocation(
             id=loc["id"],
             name=loc["name"],
@@ -177,7 +191,7 @@ async def save_floor_plan(
                 x2=bounds_data["x2"], y2=bounds_data["y2"],
             ),
             door_side=loc["door_side"],
-            door_position=loc.get("door_position", "center"),
+            door_position=raw_door_position,
             door=PixelPoint(x=door_data["x"], y=door_data["y"]) if door_data else None,
             category=loc.get("category", "room"),
             area_m2=loc.get("area_m2"),
