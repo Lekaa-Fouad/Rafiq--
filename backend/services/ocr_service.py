@@ -1,39 +1,71 @@
-"""
-services/ocr_service.py — OCR stub.
-
-TO IMPLEMENT (teammate guide)
-------------------------------
-1. Install dependencies:
-       pip install paddlepaddle paddleocr
-
-2. Load PaddleOCR at startup:
-       from paddleocr import PaddleOCR
-       app.state.ocr_engine = PaddleOCR(use_angle_cls=True, lang='en')
-
-3. Implement `run_ocr(image_bytes, redis)`:
-   a. Decode image_bytes with OpenCV.
-   b. Call app.state.ocr_engine.ocr(img_array, cls=True).
-   c. Flatten results into BoundingBox list.
-   d. Compute mean confidence; join text lines.
-   e. Cache result in Redis: rafiq:ocr:{sha256(image_bytes)}, TTL 600s.
-   f. Return OCRResponse.
-
-4. Follow the same try/except pattern as voice_service.py.
-   Raise RafiqException on all failures, never raw exceptions.
-
-Reference: voice_service.transcribe_audio() for the caching pattern.
-"""
-
 import logging
+import re
+import cv2
+import easyocr
+import numpy as np
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 logger = logging.getLogger(__name__)
 
 
-async def run_ocr(_image_bytes: bytes, _redis) -> dict:
-    """
-    [STUB] Extract text from an image using PaddleOCR.
+def fix_mixed_text(text: str) -> str:
+   
+   
+    if not text or not text.strip():
+        return text
 
-    See module docstring for full implementation instructions.
-    """
-    logger.info("[OCR] run_ocr called — stub, not yet implemented")
-    return {"status": "not_implemented"}
+    lines = text.split('\n')
+    fixed_lines = []
+
+    for line in lines:
+        if re.search(r'[\u0600-\u06FF]', line):
+            reshaped = arabic_reshaper.reshape(line)
+            fixed_line = get_display(reshaped)
+            fixed_lines.append(fixed_line)
+        else:
+            fixed_lines.append(line)
+
+    return '\n'.join(fixed_lines)
+
+
+class OCRService:
+    def __init__(self):
+        logger.info("[OCRService] Initializing EasyOCR reader (ar + en)...")
+        self.reader = easyocr.Reader(['ar', 'en'])
+        logger.info("[OCRService] EasyOCR reader ready.")
+
+    def extract_text(self, image_bytes: bytes) -> dict:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if image is None:
+            logger.warning("[OCRService] Failed to decode image bytes.")
+            return {"annotations": [], "full_text": ""}
+
+        results = self.reader.readtext(image)
+
+        annotations = []
+        full_text_parts = []
+
+        for _, text, confidence in results:
+            fixed_text = fix_mixed_text(text)
+            
+            annotations.append({
+                "text": fixed_text,
+                "confidence": round(float(confidence), 2),
+            })
+            
+            full_text_parts.append(fixed_text)
+
+        
+        full_text_combined = " ".join(full_text_parts)
+
+        return {
+            "annotations": annotations,
+            "full_text": full_text_combined,
+        }
+
+
+# Singleton — imported and reused across the app
+ocr_service = OCRService()

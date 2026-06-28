@@ -1,32 +1,42 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, status, UploadFile
 from fastapi.responses import Response
 
 from core.dependencies import verify_api_key
 from core.responses import RafiqResponse, success_response
-from models.ocr import OCRModel
-from services import voice_service 
+from models.ocr import OCRResponseData
+from services import voice_service
+from services.ocr_service import ocr_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/ocr",
     tags=["OCR"],
-    dependencies=[Depends(verify_api_key)], 
+    dependencies=[Depends(verify_api_key)],
 )
 
-ocr_injector = OCRModel()
 
-# ── ocr only (extract text from image) ──────────────────────────────────────────
+# ── helpers ────────────────────────────────────────────────────────────────────
+
+def _assert_image(file: UploadFile) -> None:
+    """Raise 422 if the uploaded file is not an image."""
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Uploaded file must be an image.",
+        )
+
+
+# ── OCR only ───────────────────────────────────────────────────────────────────
 
 @router.post(
     "",
     summary="Optical Character Recognition — extract text from image",
-    response_model=RafiqResponse, 
+    response_model=RafiqResponse,
     responses={
-        200: {"description": "Successful text extraction."},
+        200: {"description": "Successful text extraction.", "model": OCRResponseData},
         401: {"description": "Invalid or missing API key."},
         422: {"description": "Uploaded file must be a valid image."},
     },
@@ -35,36 +45,32 @@ async def extract_text_from_image(
     file: UploadFile = File(..., description="Image file to extract text from (png, jpg, jpeg)."),
 ):
     """
-    Upload any image file containing Arabic or English text and receive structural text data.
+    Upload any image containing Arabic or English text and receive structured text data.
     """
     logger.info("[OCR] — file: %s", file.filename)
+    _assert_image(file)
 
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, 
-            detail="Uploaded file must be an image."
-        )
-        
     try:
         contents = await file.read()
-        ocr_results = ocr_injector.extract_text(contents)
-        
+        ocr_results = ocr_service.extract_text(contents)
+
         return success_response(
             data={
                 "annotations": ocr_results["annotations"],
-                "full_text": ocr_results["full_text"]
+                "full_text": ocr_results["full_text"],
             },
             message="Text extracted successfully.",
-            spoken_message=ocr_results["full_text"] or "No text detected."
+            spoken_message=ocr_results["full_text"] or "No text detected.",
         )
     except Exception as exc:
+        logger.exception("[OCR] Processing failed.")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=f"OCR processing failed: {exc}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"OCR processing failed: {exc}",
         ) from exc
 
 
-# ── ocr to voice (extract text and convert to speech) ──────────────────────────
+# ── OCR → Voice ────────────────────────────────────────────────────────────────
 
 @router.post(
     "/to-voice",
@@ -72,45 +78,35 @@ async def extract_text_from_image(
     response_class=Response,
     responses={
         200: {
-            "description": "MP3 audio file download containing the image text.",
+            "description": "MP3 audio file containing the spoken image text.",
             "content": {"audio/mpeg": {}},
         },
         401: {"description": "Invalid or missing API key."},
-        422: {"description": "Uploaded file must be a valid image or speech synthesis failed."},
+        422: {"description": "Uploaded file must be a valid image."},
+        500: {"description": "OCR or speech-synthesis pipeline failed."},
     },
 )
 async def extract_text_and_speak(
-    file: UploadFile = File(..., description="Image file to read out loud."),
+    file: UploadFile = File(..., description="Image file to read out loud (png / jpg / jpeg)."),
 ):
     """
     Convert image text directly to speech and download the result as an MP3 file.
-
-    - file: multipart image file (png / jpg / jpeg)
-    
-    The response is a downloadable audio/mpeg file.
     """
     logger.info("[OCR] /to-voice — file: %s", file.filename)
+    _assert_image(file)
 
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, 
-            detail="Uploaded file must be an image."
-        )
-        
     try:
         contents = await file.read()
-        ocr_results = ocr_injector.extract_text(contents)
-        full_text = ocr_results["full_text"]
-        
-        if not full_text.strip():
-            full_text = "No text detected in the image."
+        ocr_results = ocr_service.extract_text(contents)
+        full_text = ocr_results["full_text"].strip() or "No text detected in the image."
+
         audio_bytes, voice_used, mime_type = await voice_service.synthesise_speech(
             text=full_text,
-            voice=None,      
-            rate=None,     
+            voice=None,
+            rate=None,
             language=None,
         )
-        
+
         return Response(
             content=audio_bytes,
             media_type=mime_type,
@@ -121,7 +117,8 @@ async def extract_text_and_speak(
             },
         )
     except Exception as exc:
+        logger.exception("[OCR] /to-voice pipeline failed.")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=f"OCR to Voice pipeline failed: {exc}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"OCR to Voice pipeline failed: {exc}",
         ) from exc
